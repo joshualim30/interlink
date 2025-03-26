@@ -59,47 +59,27 @@ export default function Profile() {
 
         try {
             // Get user document
-            const userRef = doc(db, 'users', auth.currentUser.uid);
-            const userDoc = await getDoc(userRef);
+            const userRef = collection(db, 'users');
+            const userQuery = query(userRef, where('username', '==', auth.currentUser.displayName));
+            const userSnapshot = await getDocs(userQuery);
+            const userDoc = userSnapshot.docs[0];
 
             if (userDoc.exists()) {
                 const userData = userDoc.data();
+                console.log("USER DATA", userData);
                 setUsername(userData.username || '');
                 setNewUsername(userData.username || '');
                 setProfanityFilter(userData.profanityFilter ?? true); // Default to true if not set
+
+                // Set stats from user document
+                setStats({
+                    totalGames: userData.totalGames || 10,
+                    totalWins: userData.totalWins || 10,
+                    totalLosses: userData.totalLosses || 10,
+                    highestScore: userData.highestScore || 10,
+                    averageWager: userData.averageWager || 10
+                });
             }
-
-            // Get user's game history
-            const submittedWordsRef = collection(db, 'submittedWords');
-            const q = query(submittedWordsRef, where('userId', '==', auth.currentUser.uid));
-            const querySnapshot = await getDocs(q);
-
-            // Calculate stats
-            let totalWins = 0;
-            let totalLosses = 0;
-            let totalWager = 0;
-            let highestScore = 0;
-
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                if (data.won) {
-                    totalWins++;
-                } else {
-                    totalLosses++;
-                }
-                totalWager += data.wager || 0;
-                if (data.score > highestScore) {
-                    highestScore = data.score;
-                }
-            });
-
-            setStats({
-                totalGames: querySnapshot.size,
-                totalWins,
-                totalLosses,
-                highestScore,
-                averageWager: querySnapshot.size > 0 ? Math.round(totalWager / querySnapshot.size) : 0
-            });
         } catch (error) {
             console.error('Error fetching user data:', error);
             setError('Failed to load user data');

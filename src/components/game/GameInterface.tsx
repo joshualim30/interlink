@@ -270,10 +270,7 @@ export default function GameInterface() {
 
                 const wordSnapshot = await getDocs(wordQuery);
 
-                if (!wordSnapshot.empty) {
-                    // Word was deleted by someone else
-                    handleLoss();
-                } else {
+                if (wordSnapshot.empty && gameState.timeLeft == 0) {
                     // Show loss message, already handled loss
                     addFeedback('Uh-oh! Someone else submitted this word first. You lose your wager.', 'error');
 
@@ -389,6 +386,41 @@ export default function GameInterface() {
                 });
             }
 
+            // Update user's stats
+            const userRef = doc(db, 'users', auth.currentUser!.uid);
+            const userDoc = await getDoc(userRef);
+            const userData = userDoc.data() || {};
+
+            // Calculate new stats
+            const totalGames = (userData.totalGames || 0) + 1;
+            const totalWins = userData.totalWins || 0;
+            const totalLosses = userData.totalLosses || 0;
+            const currentTotalWager = (userData.averageWager || 0) * (userData.totalGames || 0);
+            const newAverageWager = Math.round((currentTotalWager + gameState.wager) / totalGames);
+
+            // Update user's stats
+            await updateDoc(userRef, {
+                totalGames,
+                totalWins,
+                totalLosses,
+                averageWager: newAverageWager,
+                highestScore: Math.max(userData.highestScore || 0, gameState.score)
+            });
+
+            console.log("Updated user stats:", {
+                totalGames,
+                totalWins,
+                totalLosses,
+                averageWager: newAverageWager,
+                highestScore: Math.max(userData.highestScore || 0, gameState.score)
+            });
+
+            // Update user's score
+            const userScoreRef = doc(db, 'users', auth.currentUser!.uid);
+            await updateDoc(userScoreRef, {
+                score: gameState.score
+            });
+
             // Update local state immediately
             setGameState(prev => ({
                 ...prev,
@@ -407,53 +439,31 @@ export default function GameInterface() {
     };
 
     const handleWin = async () => {
-        if (!auth.currentUser) return;
-
         try {
-            const userRef = doc(db, 'users', auth.currentUser.uid);
-            const userDoc = await getDoc(userRef);
-
-            if (!userDoc.exists()) return;
-
+            // Update user's stats
+            const userRef = collection(db, 'users');
+            const userQuery = query(userRef, where('username', '==', auth.currentUser!.displayName));
+            const userSnapshot = await getDocs(userQuery);
+            const userDoc = userSnapshot.docs[0];
             const userData = userDoc.data();
-            if (!userData) return;
 
-            // Calculate new score
-            const newScore = (userData.score || 0) + gameState.wager;
-
-            // Update user's score and stats
-            await updateDoc(userRef, {
-                score: newScore,
-                totalGames: (userData.totalGames || 0) + 1,
-                totalWins: (userData.totalWins || 0) + 1,
-                highestScore: Math.max(newScore, userData.highestScore || 0)
+            // Update user's stats
+            await updateDoc(userDoc.ref, {
+                totalWins: userData.totalWins + 1,
+                score: gameState.useMultiplier ? gameState.score + (gameState.wager * 2) : gameState.score + gameState.wager
             });
 
-            // Delete the submitted word from active submissions
-            const submittedWordsRef = collection(db, 'submittedWords');
-            const q = query(
-                submittedWordsRef,
-                where('word', '==', gameState.word),
-                where('userId', '==', auth.currentUser.uid)
-            );
-            const querySnapshot = await getDocs(q);
-
-            if (!querySnapshot.empty) {
-                await deleteDoc(doc(db, 'submittedWords', querySnapshot.docs[0].id));
-            }
+            // Show success message
+            addFeedback(`Congratulations! You won ${gameState.wager} points!`, 'success');
 
             // Update local state
             setGameState(prev => ({
                 ...prev,
+                score: gameState.useMultiplier ? gameState.score + (gameState.wager * 2) : gameState.score + gameState.wager,
                 isActive: false,
                 timeLeft: 0,
-                score: newScore,
                 word: '',
-                wager: 60, // Reset to default wager
-                useMultiplier: false
             }));
-
-            addFeedback(`Congratulations! You won ${gameState.wager} points!`, 'success');
         } catch (error) {
             console.error('Error handling win:', error);
             addFeedback('Error updating score. Please try again.', 'error');
@@ -461,53 +471,29 @@ export default function GameInterface() {
     };
 
     const handleLoss = async () => {
-        if (!auth.currentUser) return;
-
         try {
-            const userRef = doc(db, 'users', auth.currentUser.uid);
+            // Update user's stats
+            const userRef = doc(db, 'users', auth.currentUser!.uid);
             const userDoc = await getDoc(userRef);
+            const userData = userDoc.data() || {};
 
-            if (!userDoc.exists()) return;
-
-            const userData = userDoc.data();
-            if (!userData) return;
-
-            // If normal mode, subtract wager from score, if multiplier mode, reset wager to 60
-            const newScore = gameState.useMultiplier ? (userData.score || 0) - 60 : (userData.score || 0) - gameState.wager;
-
-            // Update user's score and stats
-            await updateDoc(userRef, {
-                score: newScore,
-                totalGames: (userData.totalGames || 0) + 1,
-                totalLosses: (userData.totalLosses || 0) + 1
+            // Reset user's score
+            await updateDoc(userDoc.ref, {
+                score: 0,
+                totalLosses: userData.totalLosses + 1
             });
 
-            // Get the submitted word
-            const submittedWordsRef = collection(db, 'submittedWords');
-            const q = query(
-                submittedWordsRef,
-                where('word', '==', gameState.word),
-                where('userId', '==', auth.currentUser.uid)
-            );
-            const querySnapshot = await getDocs(q);
-
-            // Delete the submitted word from active submissions
-            if (!querySnapshot.empty) {
-                await deleteDoc(doc(db, 'submittedWords', querySnapshot.docs[0].id));
-            }
+            // Show loss message
+            addFeedback('Game Over! Your score has been reset.', 'error');
 
             // Update local state
             setGameState(prev => ({
                 ...prev,
                 isActive: false,
                 timeLeft: 0,
-                score: newScore,
                 word: '',
-                wager: 60, // Reset to default wager
-                useMultiplier: false
+                score: gameState.useMultiplier ? gameState.score - 0 : gameState.score - gameState.wager
             }));
-
-            addFeedback('Uh-oh! Someone else submitted this word first. You lose your wager.', 'error');
         } catch (error) {
             console.error('Error handling loss:', error);
             addFeedback('Error updating score. Please try again.', 'error');

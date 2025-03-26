@@ -21,6 +21,11 @@ export default function RegisterForm() {
                 username,
                 email,
                 score: 0,
+                highestScore: 0,
+                totalWins: 0,
+                totalLosses: 0,
+                totalGamesPlayed: 0,
+                averageWager: 0,
                 createdAt: new Date().toISOString(),
             });
             setError('');
